@@ -90,7 +90,7 @@ class TableFootballGame:
         can_move = True
         for idx, paddle in enumerate(team[active_row]):
             current_pos = self.canvas.coords(paddle)
-            if not (0 < current_pos[1] + dy < 400):
+            if not (0 < current_pos[1] + dy < 400) or not (0 < current_pos[3] + dy < 400):
                 can_move = False
                 break
 
