@@ -6,8 +6,9 @@ class TableFootballGame:
     def __init__(self, master):
         self.master = master
         self.goal_scored_flag = False
+        self.paused = False
+        self.root = master.winfo_toplevel()
         self.master.title("Table Football Game")
-
         self.canvas = tk.Canvas(self.master, width=600, height=400, bg="green")
         self.canvas.pack()
 
@@ -32,12 +33,16 @@ class TableFootballGame:
         self.score_label = tk.Label(self.master, text="Score: 0 - 0", font=("Helvetica", 12))
         self.score_label.pack()
 
+        self.master.bind("<KeyRelease-Tab>", self.toggle_game_pause)
+        self.master.bind("<KeyRelease-BackSpace>", self.reset_game)
+        self.master.bind("<KeyRelease-Escape>", self.return_to_menu)
+
     def create_team_of_paddles(self, color, x_coord, goal_x_coord):
         paddles = []
         columns = [1, 4, 3, 3]
 
         paddle_width = 20
-        paddle_height = 50
+        paddle_height = 35
         vertical_spacing = (400 - len(columns) * paddle_height) / (len(columns) + 1)
 
         goal_height = 160
@@ -69,22 +74,23 @@ class TableFootballGame:
         self.canvas.create_oval(280, 180, 320, 220, outline="white", width=2)
 
     def on_key_press(self, event):
-        if event.char.lower() == "w":
-            self.move_active_row(self.paddles_team1, -20, self.active_team1_row)
-        elif event.char.lower() == "s":
-            self.move_active_row(self.paddles_team1, 20, self.active_team1_row)
-        elif event.char.lower() == "i":
-            self.move_active_row(self.paddles_team2, -20, self.active_team2_row)
-        elif event.char.lower() == "k":
-            self.move_active_row(self.paddles_team2, 20, self.active_team2_row)
-        elif event.char.lower() == "a":
-            self.active_team1_row = (self.active_team1_row - 1) % len(self.paddles_team1)
-        elif event.char.lower() == "d":
-            self.active_team1_row = (self.active_team1_row + 1) % len(self.paddles_team1)
-        elif event.char.lower() == "j":
-            self.active_team2_row = (self.active_team2_row - 1) % len(self.paddles_team2)
-        elif event.char.lower() == "l":
-            self.active_team2_row = (self.active_team2_row + 1) % len(self.paddles_team2)
+        if not self.paused:
+            if event.char.lower() == "w":
+                self.move_active_row(self.paddles_team1, -20, self.active_team1_row)
+            elif event.char.lower() == "s":
+                self.move_active_row(self.paddles_team1, 20, self.active_team1_row)
+            elif event.char.lower() == "i":
+                self.move_active_row(self.paddles_team2, -20, self.active_team2_row)
+            elif event.char.lower() == "k":
+                self.move_active_row(self.paddles_team2, 20, self.active_team2_row)
+            elif event.char.lower() == "a":
+                self.active_team1_row = (self.active_team1_row - 1) % len(self.paddles_team1)
+            elif event.char.lower() == "d":
+                self.active_team1_row = (self.active_team1_row + 1) % len(self.paddles_team1)
+            elif event.char.lower() == "j":
+                self.active_team2_row = (self.active_team2_row - 1) % len(self.paddles_team2)
+            elif event.char.lower() == "l":
+                self.active_team2_row = (self.active_team2_row + 1) % len(self.paddles_team2)
 
     def move_active_row(self, team, dy, active_row):
         can_move = True
@@ -104,31 +110,32 @@ class TableFootballGame:
             self.canvas.move(paddle, 0, dy)
 
     def move_ball(self):
-        self.canvas.move(self.ball, self.ball_speed[0], self.ball_speed[1])
-        ball_pos = self.canvas.coords(self.ball)
+        if not self.paused:
+            self.canvas.move(self.ball, self.ball_speed[0], self.ball_speed[1])
+            ball_pos = self.canvas.coords(self.ball)
 
-        if ball_pos[1] <= 0 or ball_pos[3] >= 400:
-            self.ball_speed[1] = -self.ball_speed[1]
+            if ball_pos[1] <= 0 or ball_pos[3] >= 400:
+                self.ball_speed[1] = -self.ball_speed[1]
 
-        if ball_pos[0] <= 0:
-            if self.check_goal(ball_pos, self.goal2):
-                self.goal_scored("Player2")
-            else:
+            if ball_pos[0] <= 0:
+                if self.check_goal(ball_pos, self.goal2):
+                    self.goal_scored("Player2")
+                else:
+                    self.ball_speed[0] = -self.ball_speed[0]
+
+            if ball_pos[2] >= 600:
+                if self.check_goal(ball_pos, self.goal1):
+                    self.goal_scored("Player1")
+                else:
+                    self.ball_speed[0] = -self.ball_speed[0]
+
+            if self.check_collision(ball_pos, self.paddles_team1) or self.check_collision(ball_pos, self.paddles_team2):
                 self.ball_speed[0] = -self.ball_speed[0]
 
-        if ball_pos[2] >= 600:
-            if self.check_goal(ball_pos, self.goal1):
-                self.goal_scored("Player1")
-            else:
-                self.ball_speed[0] = -self.ball_speed[0]
+            if self.player1_score == self.MAX_GOALS or self.player2_score == self.MAX_GOALS:
+                self.game_over()
 
-        if self.check_collision(ball_pos, self.paddles_team1) or self.check_collision(ball_pos, self.paddles_team2):
-            self.ball_speed[0] = -self.ball_speed[0]
-
-        if self.player1_score == self.MAX_GOALS or self.player2_score == self.MAX_GOALS:
-            self.game_over()
-
-        self.master.after(20, self.move_ball)
+            self.master.after(20, self.move_ball)
 
     def check_goal(self, ball_pos, goal):
         goal_coords = self.canvas.coords(goal)
@@ -180,11 +187,26 @@ class TableFootballGame:
         messagebox.showinfo("Game Over", f"{winner} wins!\nFinal Score: {self.player1_score} - {self.player2_score}")
         self.master.quit()
 
-def main():
-    root = tk.Tk()
-    game = TableFootballGame(root)
-    game.move_ball()
-    root.mainloop()
+    def toggle_game_pause(self, event):
+        self.paused = not self.paused
 
-if __name__ == "__main__":
-    main()
+        if self.paused:
+            self.master.after_cancel(self.move_ball)
+        else:
+            self.move_ball()
+
+    def return_to_menu(self, event):
+        # Import GameMenu here to break the circular dependency
+        from table_football_ui import GameMenu
+
+        for widget in self.root.winfo_children():
+            if widget.winfo_exists():
+                widget.destroy()
+        menu = GameMenu(self.root)
+
+
+    def reset_game(self, event):
+        self.paused = False
+        self.reset_goal_scored_flag()
+        self.reset_ball()
+        self.update_score()
