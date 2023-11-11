@@ -1,6 +1,11 @@
 import tkinter as tk
 from tkinter import messagebox
 import random
+import numpy as np
+from ai import NeuralNetwork
+from sklearn.preprocessing import LabelEncoder
+
+
 
 class TableFootballGame:
     def __init__(self, master):
@@ -13,12 +18,16 @@ class TableFootballGame:
         self.canvas.pack()
 
         self.draw_field()
-
+        # Create an instance of NeuralNetwork
         self.ball = self.canvas.create_oval(290, 190, 310, 210, fill="white", outline="white")
-        self.goal1 = self.canvas.create_rectangle(0, 120, 10, 280, fill="red", outline="red", tags="goal")
-        self.goal2 = self.canvas.create_rectangle(590, 120, 600, 280, fill="blue", outline="blue", tags="goal")
         self.paddles_team1 = self.create_team_of_paddles("red", 50, 590)
         self.paddles_team2 = self.create_team_of_paddles("blue", 570, 10)
+        input_size = len(self.get_current_state())
+        output_size = 3  # Adjust the output size based on your AI actions
+        self.neural_network = NeuralNetwork(input_size, output_size)
+
+        self.goal1 = self.canvas.create_rectangle(0, 120, 10, 280, fill="red", outline="red", tags="goal")
+        self.goal2 = self.canvas.create_rectangle(590, 120, 600, 280, fill="blue", outline="blue", tags="goal")
         self.active_team1_row = 0
         self.active_team2_row = 0
         self.canvas.bind("<KeyPress>", self.on_key_press)
@@ -36,6 +45,14 @@ class TableFootballGame:
         self.master.bind("<KeyRelease-Tab>", self.toggle_game_pause)
         self.master.bind("<KeyRelease-BackSpace>", self.reset_game)
         self.master.bind("<KeyRelease-Escape>", self.return_to_menu)
+
+        self.training_data = {
+            'features': [],
+            'labels': []
+        }
+        self.neural_network = NeuralNetwork(len(self.get_current_state()), 3)  # Adjust output size based on actions
+
+        self.move_ball()
 
     def create_team_of_paddles(self, color, x_coord, goal_x_coord):
         paddles = []
@@ -91,6 +108,9 @@ class TableFootballGame:
                 self.active_team2_row = (self.active_team2_row - 1) % len(self.paddles_team2)
             elif event.char.lower() == "l":
                 self.active_team2_row = (self.active_team2_row + 1) % len(self.paddles_team2)
+
+            # Запись обучающих данных при нажатии клавиши
+            self.record_training_data("some_action")
 
     def move_active_row(self, team, dy, active_row):
         can_move = True
@@ -156,7 +176,8 @@ class TableFootballGame:
         for paddle_row in paddles:
             for paddle in paddle_row:
                 paddle_coords = self.canvas.coords(paddle)
-                if paddle_coords[0] < ball_center[0] < paddle_coords[2] and paddle_coords[1] < ball_center[1] < paddle_coords[3]:
+                if paddle_coords[0] < ball_center[0] < paddle_coords[2] and paddle_coords[1] < ball_center[1] < \
+                        paddle_coords[3]:
                     return True
 
         return False
@@ -204,9 +225,80 @@ class TableFootballGame:
                 widget.destroy()
         menu = GameMenu(self.root)
 
-
     def reset_game(self, event):
         self.paused = False
         self.reset_goal_scored_flag()
         self.reset_ball()
         self.update_score()
+
+    def record_training_data(self, action):
+        # Здесь записывайте текущее состояние и действие противника в обучающие данные
+        features = self.get_current_state()
+
+        # Добавьте текущее состояние и действие в обучающие данные
+        self.training_data['features'].append(features)
+        self.training_data['labels'].append(action)
+
+        # Преобразуйте метки в числовой формат
+        label_encoder = LabelEncoder()
+        labels_encoded = label_encoder.fit_transform(self.training_data['labels'])
+
+        # Обучите нейронную сеть
+        self.train_neural_network(features, labels_encoded)
+
+    def get_current_state(self):
+        # Получите координаты мяча
+        ball_coords = self.canvas.coords(self.ball)
+
+        # Получите координаты ракеток
+        paddles_team1_coords = [self.canvas.coords(paddle) for row in self.paddles_team1 for paddle in row]
+        paddles_team2_coords = [self.canvas.coords(paddle) for row in self.paddles_team2 for paddle in row]
+
+        # Преобразуйте координаты в одномерный массив
+        features = np.array([
+            ball_coords[0], ball_coords[1], ball_coords[2], ball_coords[3]
+        ])
+
+        # Добавьте координаты ракеток, если они существуют
+        if paddles_team1_coords:
+            features = np.concatenate((features, paddles_team1_coords[0]))
+        else:
+            features = np.concatenate((features, [0, 0, 0, 0]))
+
+        if len(paddles_team1_coords) > 1:
+            features = np.concatenate((features, paddles_team1_coords[1]))
+        else:
+            features = np.concatenate((features, [0, 0, 0, 0]))
+
+        if len(paddles_team1_coords) > 2:
+            features = np.concatenate((features, paddles_team1_coords[2]))
+        else:
+            features = np.concatenate((features, [0, 0, 0, 0]))
+
+        if paddles_team2_coords:
+            features = np.concatenate((features, paddles_team2_coords[0]))
+        else:
+            features = np.concatenate((features, [0, 0, 0, 0]))
+
+        if len(paddles_team2_coords) > 1:
+            features = np.concatenate((features, paddles_team2_coords[1]))
+        else:
+            features = np.concatenate((features, [0, 0, 0, 0]))
+
+        if len(paddles_team2_coords) > 2:
+            features = np.concatenate((features, paddles_team2_coords[2]))
+        else:
+            features = np.concatenate((features, [0, 0, 0, 0]))
+
+        return features
+
+    def train_neural_network(self):
+        features = np.array(self.training_data['features'])
+        labels = np.array(self.training_data['labels'])
+        self.neural_network.train(features, labels)
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    game = TableFootballGame(root)
+    root.mainloop()
