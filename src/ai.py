@@ -12,7 +12,7 @@ class NeuralNetwork:
         model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
         return model
 
-    def train(self, features, labels, epochs=10):
+    def train(self, features, labels, epochs=1000):
         self.model.fit(features, labels, epochs=epochs)
 
     def predict(self, features):

@@ -1,9 +1,11 @@
+import tensorflow as tf
 import tkinter as tk
 from tkinter import messagebox
 import random
 import numpy as np
 from ai import NeuralNetwork
 from sklearn.preprocessing import LabelEncoder
+from keras.utils import to_categorical
 
 
 
@@ -16,8 +18,10 @@ class TableFootballGame:
         self.master.title("Table Football Game")
         self.canvas = tk.Canvas(self.master, width=600, height=400, bg="green")
         self.canvas.pack()
-
         self.draw_field()
+
+        self.epochs = 1000  # You can adjust the value based on your needs
+
         # Create an instance of NeuralNetwork
         self.ball = self.canvas.create_oval(290, 190, 310, 210, fill="white", outline="white")
         self.paddles_team1 = self.create_team_of_paddles("red", 50, 590)
@@ -292,10 +296,13 @@ class TableFootballGame:
 
         return features
 
-    def train_neural_network(self):
-        features = np.array(self.training_data['features'])
-        labels = np.array(self.training_data['labels'])
-        self.neural_network.train(features, labels)
+    def train_neural_network(self, features, labels):
+        unique_classes = np.unique(labels)
+        num_classes = len(unique_classes)
+        labels_one_hot = to_categorical(labels, num_classes=num_classes)
+        self.neural_network.model.fit(features.reshape(-1, 28), labels_one_hot, epochs=self.epochs)
+
+
 
 
 if __name__ == "__main__":
