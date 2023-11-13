@@ -1,11 +1,58 @@
-import tensorflow as tf
 import tkinter as tk
 from tkinter import messagebox
 import random
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
 import numpy as np
-from ai import NeuralNetwork
-from sklearn.preprocessing import LabelEncoder
-from keras.utils import to_categorical
+
+class NeuralNetwork(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size):
+        super(NeuralNetwork, self).__init__()
+        self.layer1 = nn.Linear(input_size, hidden_size)
+        self.relu = nn.ReLU()
+        self.layer2 = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x):
+        x = self.layer1(x)
+        x = self.relu(x)
+        x = self.layer2(x)
+        return x
+
+class AIController:
+    def __init__(self, game):
+        self.game = game
+        self.input_size = 8  # 2 paddles * 4 coordinates (x, y)
+        self.hidden_size = 16
+        self.output_size = 2  # Move up or down
+        self.model = NeuralNetwork(self.input_size, self.hidden_size, self.output_size)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
+
+    def get_input_data(self):
+        ball_coords = self.game.get_ball_coords()
+        paddle_coords = [self.game.canvas.coords(paddle) for paddle in
+                         self.game.paddles_team2[self.game.active_team2_row]]
+        input_data = np.array([ball_coords[0], ball_coords[1], ball_coords[2], ball_coords[3]])
+        for coords in paddle_coords:
+            input_data = np.concatenate((input_data, coords))
+        return input_data
+
+    def get_action(self):
+        input_data = self.get_input_data()
+        input_tensor = torch.tensor(input_data, dtype=torch.float32)
+        output_tensor = self.model(input_tensor)
+        action = torch.argmax(output_tensor).item()
+        return action
+
+    def update(self):
+        if not self.game.paused:
+            action = self.get_action()
+            if action == 0:
+                self.game.move_active_row(self.game.paddles_team2, -20, self.game.active_team2_row)
+            elif action == 1:
+                self.game.move_active_row(self.game.paddles_team2, 20, self.game.active_team2_row)
+            self.game.master.after(20, self.update)
 
 
 
@@ -20,18 +67,11 @@ class TableFootballGame:
         self.canvas.pack()
         self.draw_field()
 
-        self.epochs = 1000  # You can adjust the value based on your needs
-
-        # Create an instance of NeuralNetwork
         self.ball = self.canvas.create_oval(290, 190, 310, 210, fill="white", outline="white")
-        self.paddles_team1 = self.create_team_of_paddles("red", 50, 590)
-        self.paddles_team2 = self.create_team_of_paddles("blue", 570, 10)
-        input_size = len(self.get_current_state())
-        output_size = 3  # Adjust the output size based on your AI actions
-        self.neural_network = NeuralNetwork(input_size, output_size)
-
         self.goal1 = self.canvas.create_rectangle(0, 120, 10, 280, fill="red", outline="red", tags="goal")
         self.goal2 = self.canvas.create_rectangle(590, 120, 600, 280, fill="blue", outline="blue", tags="goal")
+        self.paddles_team1 = self.create_team_of_paddles("red", 50, 590)
+        self.paddles_team2 = self.create_team_of_paddles("blue", 570, 10)
         self.active_team1_row = 0
         self.active_team2_row = 0
         self.canvas.bind("<KeyPress>", self.on_key_press)
@@ -50,13 +90,8 @@ class TableFootballGame:
         self.master.bind("<KeyRelease-BackSpace>", self.reset_game)
         self.master.bind("<KeyRelease-Escape>", self.return_to_menu)
 
-        self.training_data = {
-            'features': [],
-            'labels': []
-        }
-        self.neural_network = NeuralNetwork(len(self.get_current_state()), 3)  # Adjust output size based on actions
-
-        self.move_ball()
+        self.ai_controller = AIController(self)
+        self.ai_controller.update()
 
     def create_team_of_paddles(self, color, x_coord, goal_x_coord):
         paddles = []
@@ -113,9 +148,6 @@ class TableFootballGame:
             elif event.char.lower() == "l":
                 self.active_team2_row = (self.active_team2_row + 1) % len(self.paddles_team2)
 
-            # Запись обучающих данных при нажатии клавиши
-            self.record_training_data("some_action")
-
     def move_active_row(self, team, dy, active_row):
         can_move = True
         for idx, paddle in enumerate(team[active_row]):
@@ -161,6 +193,9 @@ class TableFootballGame:
 
             self.master.after(20, self.move_ball)
 
+    def get_ball_coords(self):
+        return self.canvas.coords(self.ball)
+
     def check_goal(self, ball_pos, goal):
         goal_coords = self.canvas.coords(goal)
         ball_radius = 10
@@ -180,8 +215,7 @@ class TableFootballGame:
         for paddle_row in paddles:
             for paddle in paddle_row:
                 paddle_coords = self.canvas.coords(paddle)
-                if paddle_coords[0] < ball_center[0] < paddle_coords[2] and paddle_coords[1] < ball_center[1] < \
-                        paddle_coords[3]:
+                if paddle_coords[0] < ball_center[0] < paddle_coords[2] and paddle_coords[1] < ball_center[1] < paddle_coords[3]:
                     return True
 
         return False
@@ -229,83 +263,9 @@ class TableFootballGame:
                 widget.destroy()
         menu = GameMenu(self.root)
 
+
     def reset_game(self, event):
         self.paused = False
         self.reset_goal_scored_flag()
         self.reset_ball()
         self.update_score()
-
-    def record_training_data(self, action):
-        # Здесь записывайте текущее состояние и действие противника в обучающие данные
-        features = self.get_current_state()
-
-        # Добавьте текущее состояние и действие в обучающие данные
-        self.training_data['features'].append(features)
-        self.training_data['labels'].append(action)
-
-        # Преобразуйте метки в числовой формат
-        label_encoder = LabelEncoder()
-        labels_encoded = label_encoder.fit_transform(self.training_data['labels'])
-
-        # Обучите нейронную сеть
-        self.train_neural_network(features, labels_encoded)
-
-    def get_current_state(self):
-        # Получите координаты мяча
-        ball_coords = self.canvas.coords(self.ball)
-
-        # Получите координаты ракеток
-        paddles_team1_coords = [self.canvas.coords(paddle) for row in self.paddles_team1 for paddle in row]
-        paddles_team2_coords = [self.canvas.coords(paddle) for row in self.paddles_team2 for paddle in row]
-
-        # Преобразуйте координаты в одномерный массив
-        features = np.array([
-            ball_coords[0], ball_coords[1], ball_coords[2], ball_coords[3]
-        ])
-
-        # Добавьте координаты ракеток, если они существуют
-        if paddles_team1_coords:
-            features = np.concatenate((features, paddles_team1_coords[0]))
-        else:
-            features = np.concatenate((features, [0, 0, 0, 0]))
-
-        if len(paddles_team1_coords) > 1:
-            features = np.concatenate((features, paddles_team1_coords[1]))
-        else:
-            features = np.concatenate((features, [0, 0, 0, 0]))
-
-        if len(paddles_team1_coords) > 2:
-            features = np.concatenate((features, paddles_team1_coords[2]))
-        else:
-            features = np.concatenate((features, [0, 0, 0, 0]))
-
-        if paddles_team2_coords:
-            features = np.concatenate((features, paddles_team2_coords[0]))
-        else:
-            features = np.concatenate((features, [0, 0, 0, 0]))
-
-        if len(paddles_team2_coords) > 1:
-            features = np.concatenate((features, paddles_team2_coords[1]))
-        else:
-            features = np.concatenate((features, [0, 0, 0, 0]))
-
-        if len(paddles_team2_coords) > 2:
-            features = np.concatenate((features, paddles_team2_coords[2]))
-        else:
-            features = np.concatenate((features, [0, 0, 0, 0]))
-
-        return features
-
-    def train_neural_network(self, features, labels):
-        unique_classes = np.unique(labels)
-        num_classes = len(unique_classes)
-        labels_one_hot = to_categorical(labels, num_classes=num_classes)
-        self.neural_network.model.fit(features.reshape(-1, 28), labels_one_hot, epochs=self.epochs)
-
-
-
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    game = TableFootballGame(root)
-    root.mainloop()

@@ -1,19 +1,19 @@
 import tensorflow as tf
-from tensorflow.keras import layers, models
 
 class NeuralNetwork:
-    def __init__(self, input_size, output_size):
-        self.model = self.build_model(input_size, output_size)
+    def __init__(self):
+        self.model = tf.keras.Sequential([
+            tf.keras.layers.Input(shape=(12,)),  # Adjust based on your data
+            tf.keras.layers.Dense(128, activation='relu'),
+            tf.keras.layers.Dense(64, activation='relu'),
+            tf.keras.layers.Dense(2)  # Output layer with 2 nodes for paddle movement (up and down)
+        ])
 
-    def build_model(self, input_size, output_size):
-        model = models.Sequential()
-        model.add(layers.Dense(64, activation='relu', input_shape=(input_size,)))
-        model.add(layers.Dense(output_size, activation='softmax'))
-        model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-        return model
+        self.model.compile(optimizer='adam', loss='mse')
 
-    def train(self, features, labels, epochs=1000):
-        self.model.fit(features, labels, epochs=epochs)
+    def train(self, training_data):
+        # Extract features (input) and labels (output) from training data
+        features = [...]  # Implement this based on your data
+        labels = [...]
 
-    def predict(self, features):
-        return self.model.predict(features)
+        self.model.fit(features, labels, epochs=5)  # Adjust the number of epochs as needed
