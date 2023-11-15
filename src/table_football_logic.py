@@ -5,44 +5,44 @@ import random
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 import numpy as np
 
-class NeuralNetwork(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
-        super(NeuralNetwork, self).__init__()
-        self.layer1 = nn.Linear(input_size, hidden_size)
-        self.relu = nn.ReLU()
-        self.layer2 = nn.Linear(hidden_size, output_size)
+class PPO(nn.Module):
+    def __init__(self, input_size, output_size):
+        super(PPO, self).__init__()
+        self.fc1 = nn.Linear(input_size, 64)
+        self.fc2 = nn.Linear(64, 64)
+        self.fc3 = nn.Linear(64, output_size)
 
     def forward(self, x):
-        x = self.layer1(x)
-        x = self.relu(x)
-        x = self.layer2(x)
-        return x
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
+        return F.softmax(x, dim=-1)
 
 class AIController:
     def __init__(self, game):
         self.game = game
-        self.input_size = 8  # 2 paddles * 4 coordinates (x, y)
-        self.hidden_size = 16
-        self.output_size = 2  # Move up or down
-        self.model = NeuralNetwork(self.input_size, self.hidden_size, self.output_size)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
+        self.input_size = 8
+        self.output_size = 4
+        self.model = PPO(self.input_size, self.output_size)
+        self.input_data = np.zeros(self.input_size)
+        self.goal_scored_flag = False
 
     def get_input_data(self):
         ball_coords = self.game.get_ball_coords()
-        paddle_coords = [self.game.canvas.coords(paddle) for paddle in
-                         self.game.paddles_team2[self.game.active_team2_row]]
-        input_data = np.array([ball_coords[0], ball_coords[1], ball_coords[2], ball_coords[3]])
-        for coords in paddle_coords:
-            input_data = np.concatenate((input_data, coords))
-        return input_data
+        paddle_coords = [self.game.canvas.coords(paddle) for paddle in self.game.paddles_team2[self.game.active_team2_row]]
+        self.input_data[:4] = ball_coords  # Update the first 4 elements with ball coordinates
+        for i, coords in enumerate(paddle_coords):
+            self.input_data[4 + 2 * i : 6 + 2 * i] = coords[:2]  # Update paddle coordinates (take x and y)
+        return (self.input_data - self.input_data.mean()) / (self.input_data.std() + 1e-8)  # Normalize input data
 
     def get_action(self):
         input_data = self.get_input_data()
         input_tensor = torch.tensor(input_data, dtype=torch.float32)
         output_tensor = self.model(input_tensor)
-        action = torch.argmax(output_tensor).item()
+        action = torch.multinomial(output_tensor, 1).item()  # Sample action from the probability distribution
         return action
 
     def update(self):
@@ -52,8 +52,43 @@ class AIController:
                 self.game.move_active_row(self.game.paddles_team2, -20, self.game.active_team2_row)
             elif action == 1:
                 self.game.move_active_row(self.game.paddles_team2, 20, self.game.active_team2_row)
-            self.game.master.after(20, self.update)
 
+            ball_deflection_reward = self.check_ball_deflection()
+            if ball_deflection_reward != 0:
+                self.update_neural_network(ball_deflection_reward)
+
+    def check_ball_deflection(self):
+        ball_pos = self.game.get_ball_coords()
+        paddle_coords = [self.game.canvas.coords(paddle) for paddle in self.game.paddles_team2[self.game.active_team2_row]]
+
+        for coords in paddle_coords:
+            if self.is_point_inside_rect(ball_pos[0], ball_pos[1], coords) or \
+               self.is_point_inside_rect(ball_pos[2], ball_pos[3], coords):
+                return 0.1  # Positive reward for successful ball deflection
+
+        return 0
+
+    def is_point_inside_rect(self, x, y, rect_coords):
+        return rect_coords[0] <= x <= rect_coords[2] and rect_coords[1] <= y <= rect_coords[3]
+
+    def update_neural_network(self, reward):
+        input_data = self.get_input_data()
+        input_tensor = torch.tensor(input_data, dtype=torch.float32)
+        output_tensor = self.model(input_tensor)
+
+        action_probabilities = F.softmax(output_tensor, dim=0)
+        action = torch.multinomial(action_probabilities, 1).item()
+
+        loss_function = nn.KLDivLoss()  # Use Kullback-Leibler Divergence loss for PPO
+        reward_tensor = torch.tensor([reward], dtype=torch.float32)
+
+        optimizer = optim.Adam(self.model.parameters(), lr=0.001)  # Move optimizer initialization here
+
+        loss = loss_function(F.log_softmax(output_tensor, dim=0), action_probabilities) * reward_tensor
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
 
 class TableFootballGame:
@@ -148,6 +183,7 @@ class TableFootballGame:
             elif event.char.lower() == "l":
                 self.active_team2_row = (self.active_team2_row + 1) % len(self.paddles_team2)
 
+
     def move_active_row(self, team, dy, active_row):
         can_move = True
         for idx, paddle in enumerate(team[active_row]):
@@ -167,6 +203,7 @@ class TableFootballGame:
 
     def move_ball(self):
         if not self.paused:
+            self.ai_controller.update()  # Add this line to update the AI
             self.canvas.move(self.ball, self.ball_speed[0], self.ball_speed[1])
             ball_pos = self.canvas.coords(self.ball)
 
@@ -198,15 +235,9 @@ class TableFootballGame:
 
     def check_goal(self, ball_pos, goal):
         goal_coords = self.canvas.coords(goal)
-        ball_radius = 10
-
-        overlapping_items = self.canvas.find_overlapping(*ball_pos)
-
-        for item in overlapping_items:
-            item_tags = self.canvas.gettags(item)
-            if item_tags and "goal" in item_tags and item != goal:
-                return True
-
+        if ball_pos[1] >= goal_coords[1] and (ball_pos[3] <= goal_coords[3]):
+            self.goal_scored_flag = True
+            return True
         return False
 
     def check_collision(self, ball_pos, paddles):
@@ -221,15 +252,20 @@ class TableFootballGame:
         return False
 
     def goal_scored(self, player):
-        if not self.goal_scored_flag:
-            self.goal_scored_flag = True
+        if self.goal_scored_flag:
+            self.goal_scored_flag = False
             self.reset_ball()
             if player == "Player1":
                 self.player1_score += 1
+                reward = 1  # Награда за забитый гол
             elif player == "Player2":
                 self.player2_score += 1
+                reward = -1  # Штраф за пропущенный гол
             self.update_score()
-            self.master.after(2000, self.reset_goal_scored_flag)
+            return True, reward  # Возвращаем флаг и награду
+        self.ai_controller.goal_scored_flag = False
+        return False, 0  # Возвращаем флаг и нулевую награду
+
 
     def reset_goal_scored_flag(self):
         self.goal_scored_flag = False
@@ -237,6 +273,7 @@ class TableFootballGame:
     def reset_ball(self):
         self.canvas.coords(self.ball, 290, 190, 310, 210)
         self.ball_speed = [random.choice([-4, 4]), random.choice([-2, 2])]
+
 
     def update_score(self):
         self.score_label.config(text=f"Score: {self.player1_score} - {self.player2_score}")
