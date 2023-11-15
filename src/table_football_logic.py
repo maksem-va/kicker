@@ -49,9 +49,9 @@ class AIController:
         if not self.game.paused:
             action = self.get_action()
             if action == 0:
-                self.game.move_active_row(self.game.paddles_team2, -20, self.game.active_team2_row)
+                self.game.move_active_rows(self.game.paddles_team2, -20)
             elif action == 1:
-                self.game.move_active_row(self.game.paddles_team2, 20, self.game.active_team2_row)
+                self.game.move_active_rows(self.game.paddles_team2, 20)
 
             ball_deflection_reward = self.check_ball_deflection()
             if ball_deflection_reward != 0:
@@ -133,7 +133,7 @@ class TableFootballGame:
         columns = [1, 4, 3, 3]
 
         paddle_width = 20
-        paddle_height = 35
+        paddle_height = 25
         vertical_spacing = (400 - len(columns) * paddle_height) / (len(columns) + 1)
 
         goal_height = 160
@@ -167,38 +167,33 @@ class TableFootballGame:
     def on_key_press(self, event):
         if not self.paused:
             if event.char.lower() == "w":
-                self.move_active_row(self.paddles_team1, -20, self.active_team1_row)
+                self.move_active_rows(self.paddles_team1, -20)
             elif event.char.lower() == "s":
-                self.move_active_row(self.paddles_team1, 20, self.active_team1_row)
+                self.move_active_rows(self.paddles_team1, 20)
             elif event.char.lower() == "i":
-                self.move_active_row(self.paddles_team2, -20, self.active_team2_row)
+                self.move_active_rows(self.paddles_team2, -20)
             elif event.char.lower() == "k":
-                self.move_active_row(self.paddles_team2, 20, self.active_team2_row)
-            elif event.char.lower() == "a":
-                self.active_team1_row = (self.active_team1_row - 1) % len(self.paddles_team1)
-            elif event.char.lower() == "d":
-                self.active_team1_row = (self.active_team1_row + 1) % len(self.paddles_team1)
-            elif event.char.lower() == "j":
-                self.active_team2_row = (self.active_team2_row - 1) % len(self.paddles_team2)
-            elif event.char.lower() == "l":
-                self.active_team2_row = (self.active_team2_row + 1) % len(self.paddles_team2)
+                self.move_active_rows(self.paddles_team2, 20)
 
+    def move_row(self, row, dy):
+        for paddle in row:
+            self.move_paddle(paddle, dy)
 
-    def move_active_row(self, team, dy, active_row):
+    def move_active_rows(self, team, dy):
         can_move = True
-        for idx, paddle in enumerate(team[active_row]):
-            current_pos = self.canvas.coords(paddle)
-            if not (0 < current_pos[1] + dy < 400) or not (0 < current_pos[3] + dy < 400):
-                can_move = False
-                break
-
+        for row in team:
+            for paddle in row:
+                current_pos = self.canvas.coords(paddle)
+                if not (0 < current_pos[1] + dy < 400) or not (0 < current_pos[3] + dy < 400):
+                    can_move = False
+                    break
         if can_move:
-            for idx, paddle in enumerate(team[active_row]):
-                self.move_paddle(paddle, dy)
+            for row in team:
+                self.move_row(row, dy)
 
     def move_paddle(self, paddle, dy):
         current_pos = self.canvas.coords(paddle)
-        if 0 < current_pos[1] + dy < 400:
+        if 0 < current_pos[1] + dy < 400 and 0 < current_pos[3] + dy < 400:
             self.canvas.move(paddle, 0, dy)
 
     def move_ball(self):
