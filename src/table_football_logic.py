@@ -29,25 +29,27 @@ class AIController:
         self.model = PPO(self.input_size, self.output_size)
         self.input_data = np.zeros(self.input_size)
         self.goal_scored_flag = False
+        self.episode_data = {'states': [], 'actions': [], 'rewards': []}
 
     def get_input_data(self):
         ball_coords = self.game.get_ball_coords()
         paddle_coords = [self.game.canvas.coords(paddle) for paddle in self.game.paddles_team2[self.game.active_team2_row]]
-        self.input_data[:4] = ball_coords  # Update the first 4 elements with ball coordinates
+        self.input_data[:4] = ball_coords
         for i, coords in enumerate(paddle_coords):
-            self.input_data[4 + 2 * i : 6 + 2 * i] = coords[:2]  # Update paddle coordinates (take x and y)
-        return (self.input_data - self.input_data.mean()) / (self.input_data.std() + 1e-8)  # Normalize input data
+            self.input_data[4 + 2 * i: 6 + 2 * i] = coords[:2]
+        return (self.input_data - self.input_data.mean()) / (self.input_data.std() + 1e-8)
 
     def get_action(self):
         input_data = self.get_input_data()
         input_tensor = torch.tensor(input_data, dtype=torch.float32)
         output_tensor = self.model(input_tensor)
-        action = torch.multinomial(output_tensor, 1).item()  # Sample action from the probability distribution
-        return action
+        action = torch.multinomial(output_tensor, 1).item()
+        log_probability = torch.log(output_tensor[action])
+        return action, log_probability
 
     def update(self):
         if not self.game.paused:
-            action = self.get_action()
+            action, log_probability = self.get_action()
             if action == 0:
                 self.game.move_active_rows(self.game.paddles_team2, -20)
             elif action == 1:
@@ -55,7 +57,8 @@ class AIController:
 
             ball_deflection_reward = self.check_ball_deflection()
             if ball_deflection_reward != 0:
-                self.update_neural_network(ball_deflection_reward)
+                self.episode_data['rewards'].append(ball_deflection_reward)
+                self.update_neural_network()
 
     def check_ball_deflection(self):
         ball_pos = self.game.get_ball_coords()
@@ -71,24 +74,40 @@ class AIController:
     def is_point_inside_rect(self, x, y, rect_coords):
         return rect_coords[0] <= x <= rect_coords[2] and rect_coords[1] <= y <= rect_coords[3]
 
-    def update_neural_network(self, reward):
+    def update_neural_network(self):
         input_data = self.get_input_data()
-        input_tensor = torch.tensor(input_data, dtype=torch.float32)
-        output_tensor = self.model(input_tensor)
+        self.episode_data['states'].append(input_data)
+        action, log_probability = self.get_action()
+        self.episode_data['actions'].append(action)
 
-        action_probabilities = F.softmax(output_tensor, dim=0)
-        action = torch.multinomial(action_probabilities, 1).item()
+        if self.game.goal_scored_flag:
+            reward = 1  # Награда за забитый гол
+        else:
+            reward = 0
 
-        loss_function = nn.KLDivLoss()  # Use Kullback-Leibler Divergence loss for PPO
-        reward_tensor = torch.tensor([reward], dtype=torch.float32)
+        self.episode_data['rewards'].append(reward)
 
-        optimizer = optim.Adam(self.model.parameters(), lr=0.001)  # Move optimizer initialization here
+        if self.game.goal_scored_flag:
+            self.game.reset_goal_scored_flag()
 
-        loss = loss_function(F.log_softmax(output_tensor, dim=0), action_probabilities) * reward_tensor
+            # Обучение нейросети по эпизоду
+            states_tensor = torch.tensor(self.episode_data['states'], dtype=torch.float32)
+            actions_tensor = torch.tensor(self.episode_data['actions'], dtype=torch.long)
+            rewards_tensor = torch.tensor(self.episode_data['rewards'], dtype=torch.float32)
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            optimizer = optim.SGD(self.model.parameters(), lr=0.001)
+
+            output_tensor = self.model(states_tensor)
+            action_probabilities = F.softmax(output_tensor, dim=1)
+            chosen_probabilities = torch.gather(action_probabilities, 1, actions_tensor.view(-1, 1))
+            loss = -torch.sum(torch.log(chosen_probabilities) * rewards_tensor)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # Сброс данных эпизода
+            self.episode_data = {'states': [], 'actions': [], 'rewards': []}
 
 
 class TableFootballGame:
