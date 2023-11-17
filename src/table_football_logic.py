@@ -25,7 +25,7 @@ class AIController:
     def __init__(self, game):
         self.game = game
         self.input_size = 8
-        self.output_size = 4
+        self.output_size = 2
         self.model = PPO(self.input_size, self.output_size)
         self.input_data = np.zeros(self.input_size)
         self.goal_scored_flag = False
@@ -102,7 +102,12 @@ class TableFootballGame:
         self.canvas.pack()
         self.draw_field()
 
-        self.ball = self.canvas.create_oval(290, 190, 310, 210, fill="white", outline="white")
+        self.ball_radius = 10  # Выберите желаемый размер
+
+        self.ball = self.canvas.create_oval(300 - self.ball_radius, 200 - self.ball_radius,
+                                            300 + self.ball_radius, 200 + self.ball_radius,
+                                            fill="white", outline="white")
+
         self.goal1 = self.canvas.create_rectangle(0, 120, 10, 280, fill="red", outline="red", tags="goal")
         self.goal2 = self.canvas.create_rectangle(590, 120, 600, 280, fill="blue", outline="blue", tags="goal")
         self.paddles_team1 = self.create_team_of_paddles("red", 50, 590)
@@ -139,6 +144,7 @@ class TableFootballGame:
         goal_height = 160
 
         for col, num_paddles in enumerate(columns):
+            vertical_spacing = (400/num_paddles)/2
             if goal_x_coord < x_coord:
                 start_y = (400 - num_paddles * paddle_height - (num_paddles - 1) * vertical_spacing) / 2
                 direction = 1
