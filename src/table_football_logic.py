@@ -24,7 +24,7 @@ class PPO(nn.Module):
 class AIController:
     def __init__(self, game):
         self.game = game
-        self.input_size = 8
+        self.input_size = 26  # 8 coordinates (ball + 2 coordinates per paddle)
         self.output_size = 2
         self.model = PPO(self.input_size, self.output_size)
         self.input_data = np.zeros(self.input_size)
@@ -33,18 +33,39 @@ class AIController:
 
     def get_input_data(self):
         ball_coords = self.game.get_ball_coords()
-        paddle_coords = [self.game.canvas.coords(paddle) for paddle in self.game.paddles_team2[self.game.active_team2_row]]
-        self.input_data[:4] = ball_coords
-        for i, coords in enumerate(paddle_coords):
-            self.input_data[4 + 2 * i: 6 + 2 * i] = coords[:2]
-        return (self.input_data - self.input_data.mean()) / (self.input_data.std() + 1e-8)
+        paddle_coords = []
+
+        # Проверяем, есть ли активные ракетки в команде 2
+        if self.game.paddles_team2:
+            # Используем координаты всех ракеток команды 2
+            for row in self.game.paddles_team2:
+                paddle_coords.extend([self.game.canvas.coords(paddle) for paddle in row])
+
+            input_data = []
+
+            if paddle_coords:
+                # Обновляем input_data с учетом координат мяча и ракеток
+                input_data.extend(ball_coords)
+                for coords in paddle_coords:
+                    input_data.extend(coords[:2])
+
+                # Нормализуем input_data
+                normalized_input_data = (np.array(input_data) - np.mean(input_data)) / (np.std(input_data) + 1e-8)
+
+                # Добавим размерность (батч) 1x26
+                normalized_input_data = normalized_input_data.reshape(1, -1)
+
+                return normalized_input_data
+
+        # Возвращаем некоторое значение по умолчанию в случае отсутствия ракеток
+        return np.zeros(self.input_size)
 
     def get_action(self):
         input_data = self.get_input_data()
         input_tensor = torch.tensor(input_data, dtype=torch.float32)
         output_tensor = self.model(input_tensor)
         action = torch.multinomial(output_tensor, 1).item()
-        log_probability = torch.log(output_tensor[action])
+        log_probability = torch.log(output_tensor[0, action])
         return action, log_probability
 
     def update(self):
@@ -62,12 +83,18 @@ class AIController:
 
     def check_ball_deflection(self):
         ball_pos = self.game.get_ball_coords()
-        paddle_coords = [self.game.canvas.coords(paddle) for paddle in self.game.paddles_team2[self.game.active_team2_row]]
+        paddle_coords = []
 
-        for coords in paddle_coords:
-            if self.is_point_inside_rect(ball_pos[0], ball_pos[1], coords) or \
-               self.is_point_inside_rect(ball_pos[2], ball_pos[3], coords):
-                return 0.1  # Positive reward for successful ball deflection
+        # Проверяем, есть ли активные ракетки в команде 2
+        if self.game.paddles_team2:
+            # Используем координаты всех ракеток команды 2
+            for row in self.game.paddles_team2:
+                paddle_coords.extend([self.game.canvas.coords(paddle) for paddle in row])
+
+            for coords in paddle_coords:
+                if self.is_point_inside_rect(ball_pos[0], ball_pos[1], coords) or \
+                   self.is_point_inside_rect(ball_pos[2], ball_pos[3], coords):
+                    return 0.1  # Positive reward for successful ball deflection
 
         return 0
 
@@ -75,16 +102,19 @@ class AIController:
         return rect_coords[0] <= x <= rect_coords[2] and rect_coords[1] <= y <= rect_coords[3]
 
     def update_neural_network(self):
+        if not self.episode_data['states'] or not self.episode_data['actions'] or not self.episode_data['rewards']:
+            return  # Избегаем обновления нейросети, если данные эпизода пусты
+
         input_data = self.get_input_data()
         self.episode_data['states'].append(input_data)
         action, log_probability = self.get_action()
-        self.episode_data['actions'].append(action)
 
         if self.game.goal_scored_flag:
             reward = 1  # Награда за забитый гол
         else:
             reward = 0
 
+        self.episode_data['actions'].append(action)
         self.episode_data['rewards'].append(reward)
 
         if self.game.goal_scored_flag:
@@ -108,6 +138,7 @@ class AIController:
 
             # Сброс данных эпизода
             self.episode_data = {'states': [], 'actions': [], 'rewards': []}
+
 
 
 class TableFootballGame:
